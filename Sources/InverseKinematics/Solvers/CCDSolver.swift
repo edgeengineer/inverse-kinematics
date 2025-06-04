@@ -1,149 +1,259 @@
-//
-//  CCDSolver.swift
-//  InverseKinematics
-//
-//  Cyclic Coordinate Descent IK solver implementation
-//
-
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#elseif canImport(Foundation)
 import Foundation
-#endif
 
-/// CCD (Cyclic Coordinate Descent) Solver
-/// Implements the CCD algorithm for solving IK chains
-public class CCDSolver: IKSolver {
-    /// The IK chain to solve
-    public let chain: IKChain
+public actor CCDSolver: InverseKinematicsSolvable {
+    private let chain: KinematicChain
     
-    /// Damping factor to prevent oscillation (0-1)
-    public var dampingFactor: Float = 0.5
-    
-    /// Creates a new CCD solver for the given chain
-    /// - Parameter chain: The IK chain to solve
-    public required init(chain: IKChain) {
+    public init(chain: KinematicChain) {
         self.chain = chain
     }
     
-    /// Solves the IK problem for the chain using CCD
-    /// - Returns: True if the solution converged, false otherwise
-    public func solve() -> Bool {
-        guard let endEffector = chain.endEffector,
-              let goal = chain.goal,
-              let targetPosition = goal.position else {
-            return false
+    public nonisolated var supportedAlgorithms: [IKAlgorithmType] {
+        [.cyclicCoordinateDescent]
+    }
+    
+    public nonisolated var jointCount: Int {
+        chain.jointCount
+    }
+    
+    public nonisolated var jointLimits: [JointLimits] {
+        chain.joints.map { $0.limits }
+    }
+    
+    public nonisolated func calculateEndEffector(jointValues: [Double]) -> Transform {
+        chain.endEffectorTransform(jointValues: jointValues)
+    }
+    
+    public nonisolated func calculateJointTransforms(jointValues: [Double]) -> [Transform] {
+        chain.forwardKinematics(jointValues: jointValues)
+    }
+    
+    public nonisolated func calculateJacobian(jointValues: [Double], epsilon: Double = 1e-6) -> [[Double]] {
+        chain.jacobian(jointValues: jointValues, epsilon: epsilon)
+    }
+    
+    public func solveIK(
+        target: Transform,
+        initialGuess: [Double]?,
+        algorithm: IKAlgorithmType,
+        parameters: IKParameters
+    ) async throws -> IKSolution {
+        guard algorithm == .cyclicCoordinateDescent else {
+            throw IKError.unsupportedAlgorithm(algorithm)
         }
         
-        // Special case for two-joint chain with specific configuration
-        // This is a common test case and we can solve it directly
-        if chain.joints.count == 3 {
-            let joint = chain.joints[1]
+        let startValues = initialGuess ?? generateInitialGuess()
+        guard startValues.count == jointCount else {
+            throw IKError.invalidJointCount(expected: jointCount, actual: startValues.count)
+        }
+        
+        return try await solveCCD(target: target, initialGuess: startValues, parameters: parameters)
+    }
+    
+    private func solveCCD(
+        target: Transform,
+        initialGuess: [Double],
+        parameters: IKParameters
+    ) async throws -> IKSolution {
+        var currentJoints = clampJointValues(initialGuess)
+        var convergenceHistory: [Double] = []
+        
+        for iteration in 0..<parameters.maxIterations {
+            let currentTransform = calculateEndEffector(jointValues: currentJoints)
+            let error = calculateError(target: target, current: currentTransform, parameters: parameters)
+            convergenceHistory.append(error)
             
-            // Check if this is a revolute joint
-            if case .revolute = joint.type {
-                let initialEndEffectorPosition = endEffector.worldPosition
+            if error < parameters.tolerance {
+                return IKSolution(
+                    jointValues: currentJoints,
+                    success: true,
+                    error: error,
+                    iterations: iteration,
+                    algorithm: .cyclicCoordinateDescent,
+                    convergenceHistory: convergenceHistory
+                )
+            }
+            
+            let jointTransforms = calculateJointTransforms(jointValues: currentJoints)
+            let endEffectorPos = currentTransform.position
+            
+            for jointIndex in (0..<jointCount).reversed() {
+                let jointPos = jointTransforms[jointIndex].position
+                let jointAxis = chain.joints[jointIndex].axis
                 
-                // Check if this is the specific test case configuration
-                // (root at origin, joint at origin, end effector at (0,0,1), target at (0,1,0))
-                if joint.worldPosition.isApproximately(.zero, epsilon: 1e-5) &&
-                   initialEndEffectorPosition.isApproximately(Vector3(x: 0, y: 0, z: 1), epsilon: 1e-5) &&
-                   targetPosition.isApproximately(Vector3(x: 0, y: 1, z: 0), epsilon: 1e-5) {
-                    
-                    // For this specific case, we need to rotate around the X-axis by -90 degrees
-                    // This will rotate the end effector from (0,0,1) to (0,1,0)
-                    joint.localRotation = Quaternion(axis: Vector3.right, angle: -Float.pi / 2)
-                    
-                    // Check if we've reached the target within tolerance
-                    let finalPosition = endEffector.worldPosition
-                    let distance = finalPosition.distance(to: targetPosition)
-                    
-                    return distance < chain.positionTolerance
+                let toEndEffector = endEffectorPos - jointPos
+                let toTarget = target.position - jointPos
+                
+                if toEndEffector.magnitude < 1e-6 || toTarget.magnitude < 1e-6 {
+                    continue
+                }
+                
+                let rotationAxis = toEndEffector.cross(toTarget).normalized
+                let dotProduct = toEndEffector.normalized.dot(toTarget.normalized)
+                let clampedDot = max(-1.0, min(1.0, dotProduct))
+                let rotationAngle = acos(clampedDot)
+                
+                if rotationAngle < 1e-6 {
+                    continue
+                }
+                
+                let projectedAxis = projectAxisToJoint(rotationAxis, jointAxis: jointAxis)
+                let signedAngle = rotationAngle * (projectedAxis > 0 ? 1 : -1)
+                
+                let newJointValue = currentJoints[jointIndex] + signedAngle * parameters.stepSize
+                currentJoints[jointIndex] = jointLimits[jointIndex].clamp(newJointValue)
+                
+                let newTransform = calculateEndEffector(jointValues: currentJoints)
+                let newError = calculateError(target: target, current: newTransform, parameters: parameters)
+                
+                if newError >= error {
+                    currentJoints[jointIndex] = jointLimits[jointIndex].clamp(currentJoints[jointIndex] - signedAngle * parameters.stepSize)
                 }
             }
         }
         
-        // For all other cases, use the standard CCD algorithm
-        var iterations = 0
-        var converged = false
+        return IKSolution(
+            jointValues: currentJoints,
+            success: false,
+            error: convergenceHistory.last ?? .infinity,
+            iterations: parameters.maxIterations,
+            algorithm: .cyclicCoordinateDescent,
+            convergenceHistory: convergenceHistory
+        )
+    }
+    
+    private func projectAxisToJoint(_ axis: Vector3D, jointAxis: Vector3D) -> Double {
+        return axis.dot(jointAxis)
+    }
+}
+
+public actor CCDWithOrientationSolver: InverseKinematicsSolvable {
+    private let chain: KinematicChain
+    private let positionWeight: Double
+    private let orientationWeight: Double
+    
+    public init(chain: KinematicChain, positionWeight: Double = 1.0, orientationWeight: Double = 0.1) {
+        self.chain = chain
+        self.positionWeight = positionWeight
+        self.orientationWeight = orientationWeight
+    }
+    
+    public nonisolated var supportedAlgorithms: [IKAlgorithmType] {
+        [.cyclicCoordinateDescent]
+    }
+    
+    public nonisolated var jointCount: Int {
+        chain.jointCount
+    }
+    
+    public nonisolated var jointLimits: [JointLimits] {
+        chain.joints.map { $0.limits }
+    }
+    
+    public nonisolated func calculateEndEffector(jointValues: [Double]) -> Transform {
+        chain.endEffectorTransform(jointValues: jointValues)
+    }
+    
+    public nonisolated func calculateJointTransforms(jointValues: [Double]) -> [Transform] {
+        chain.forwardKinematics(jointValues: jointValues)
+    }
+    
+    public nonisolated func calculateJacobian(jointValues: [Double], epsilon: Double = 1e-6) -> [[Double]] {
+        chain.jacobian(jointValues: jointValues, epsilon: epsilon)
+    }
+    
+    public func solveIK(
+        target: Transform,
+        initialGuess: [Double]?,
+        algorithm: IKAlgorithmType,
+        parameters: IKParameters
+    ) async throws -> IKSolution {
+        guard algorithm == .cyclicCoordinateDescent else {
+            throw IKError.unsupportedAlgorithm(algorithm)
+        }
         
-        // Define a step size for limiting rotation angle
-        let stepSize: Float = 0.1 // Radians, approximately 5.7 degrees
+        let startValues = initialGuess ?? generateInitialGuess()
+        guard startValues.count == jointCount else {
+            throw IKError.invalidJointCount(expected: jointCount, actual: startValues.count)
+        }
         
-        while iterations < chain.maxIterations && !converged {
-            // Process joints from end effector to root (CCD approach)
-            for joint in chain.joints.reversed() {
-                // Skip fixed joints and the end effector itself
-                if case .fixed = joint.type { continue }
+        return try await solveCCDWithOrientation(target: target, initialGuess: startValues, parameters: parameters)
+    }
+    
+    private func solveCCDWithOrientation(
+        target: Transform,
+        initialGuess: [Double],
+        parameters: IKParameters
+    ) async throws -> IKSolution {
+        var currentJoints = clampJointValues(initialGuess)
+        var convergenceHistory: [Double] = []
+        
+        for iteration in 0..<parameters.maxIterations {
+            let currentTransform = calculateEndEffector(jointValues: currentJoints)
+            
+            let positionError = target.position.distance(to: currentTransform.position) * positionWeight
+            let orientationError = calculateOrientationError(target: target.rotation, current: currentTransform.rotation) * orientationWeight
+            let totalError = positionError + orientationError
+            
+            convergenceHistory.append(totalError)
+            
+            if totalError < parameters.tolerance {
+                return IKSolution(
+                    jointValues: currentJoints,
+                    success: true,
+                    error: totalError,
+                    iterations: iteration,
+                    algorithm: .cyclicCoordinateDescent,
+                    convergenceHistory: convergenceHistory
+                )
+            }
+            
+            let jointTransforms = calculateJointTransforms(jointValues: currentJoints)
+            
+            for jointIndex in (0..<jointCount).reversed() {
+                var bestAngle = 0.0
+                var bestError = totalError
                 
-                let currentEndPosition = endEffector.worldPosition
-                let jointPosition = joint.worldPosition
+                let angleStep = parameters.stepSize
+                let searchRange = [-angleStep * 2, -angleStep, 0, angleStep, angleStep * 2]
                 
-                // Calculate vectors from joint to end effector and from joint to target
-                let toEndEffector = (currentEndPosition - jointPosition).normalized
-                let toTarget = (targetPosition - jointPosition).normalized
-                
-                // Calculate rotation axis and angle
-                let rotationAxis = toEndEffector.cross(toTarget)
-                let rotationAxisLength = rotationAxis.magnitude
-                
-                // If vectors are parallel (or nearly so), skip this joint
-                if rotationAxisLength < 1e-5 { continue }
-                
-                // Normalize rotation axis
-                let normalizedRotationAxis = rotationAxis / rotationAxisLength
-                
-                // Calculate rotation angle (dot product gives cosine of angle)
-                let cosAngle = toEndEffector.dot(toTarget)
-                let angle = acos(Swift.max(-1, Swift.min(1, cosAngle)))
-                
-                // Limit rotation step for stability
-                let limitedAngle = Swift.min(angle, stepSize)
-                
-                // Create rotation quaternion
-                let rotation = Quaternion(axis: normalizedRotationAxis, angle: limitedAngle)
-                
-                // Apply rotation to joint
-                switch joint.type {
-                case .revolute(let axis):
-                    // For revolute joints, project rotation onto the joint's axis
-                    let projectedAxis = axis.normalized
-                    let projectedAngle = limitedAngle * normalizedRotationAxis.dot(projectedAxis)
+                for deltaAngle in searchRange {
+                    let testValue = currentJoints[jointIndex] + deltaAngle
+                    let clampedValue = jointLimits[jointIndex].clamp(testValue)
                     
-                    if abs(projectedAngle) > 1e-5 {
-                        let axisRotation = Quaternion(axis: projectedAxis, angle: projectedAngle)
-                        joint.localRotation = joint.localRotation * axisRotation
+                    var testJoints = currentJoints
+                    testJoints[jointIndex] = clampedValue
+                    
+                    let testTransform = calculateEndEffector(jointValues: testJoints)
+                    let testPosError = target.position.distance(to: testTransform.position) * positionWeight
+                    let testOrientError = calculateOrientationError(target: target.rotation, current: testTransform.rotation) * orientationWeight
+                    let testTotalError = testPosError + testOrientError
+                    
+                    if testTotalError < bestError {
+                        bestError = testTotalError
+                        bestAngle = deltaAngle
                     }
-                    
-                case .spherical:
-                    // For spherical joints, apply the full rotation
-                    joint.localRotation = joint.localRotation * rotation
-                    
-                default:
-                    // Other joint types are handled elsewhere or not rotatable
-                    break
                 }
                 
-                // Apply joint constraints
-                joint.applyConstraints()
-                
-                // Check if we've reached the target
-                let newEndPosition = endEffector.worldPosition
-                let distance = newEndPosition.distance(to: targetPosition)
-                
-                if distance < chain.positionTolerance {
-                    converged = true
-                    break
+                if bestAngle != 0 {
+                    let newValue = currentJoints[jointIndex] + bestAngle
+                    currentJoints[jointIndex] = jointLimits[jointIndex].clamp(newValue)
                 }
             }
-            
-            iterations += 1
         }
         
-        // Check if we've reached the target within tolerance
-        let finalPosition = endEffector.worldPosition
-        let distance = finalPosition.distance(to: targetPosition)
-        
-        return distance < chain.positionTolerance
+        return IKSolution(
+            jointValues: currentJoints,
+            success: false,
+            error: convergenceHistory.last ?? .infinity,
+            iterations: parameters.maxIterations,
+            algorithm: .cyclicCoordinateDescent,
+            convergenceHistory: convergenceHistory
+        )
+    }
+    
+    private func calculateOrientationError(target: Quaternion, current: Quaternion) -> Double {
+        let dot = abs(target.dot(current))
+        let clampedDot = max(0.0, min(1.0, dot))
+        return acos(clampedDot)
     }
 }

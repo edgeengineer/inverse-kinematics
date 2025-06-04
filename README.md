@@ -1,196 +1,242 @@
-# Swift Inverse Kinematics Library
+# Inverse Kinematics Swift Library
 
-A cross-platform Swift 6 library for inverse kinematics (IK) calculations, suitable for games, 3D applications, and robotics.
+![Swift 6.1+](https://img.shields.io/badge/Swift-6.1+-orange.svg)
+![Platforms](https://img.shields.io/badge/Platforms-iOS%2013+%20|%20macOS%2013+%20|%20tvOS%2013+%20|%20watchOS%206+%20|%20visionOS%201+-blue.svg)
+![CI Status](https://github.com/edgeengineer/inverse-kinematics/workflows/Swift%20CI/badge.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
 
-NOT READY FOR PUBLIC USE
+A comprehensive, cross-platform Swift library for robotics inverse kinematics with modern Swift 6.1+ concurrency support.
 
 ## Features
 
-- **Cross-Platform**: Works on Apple platforms (iOS, macOS, watchOS, tvOS), Linux, and Windows
-- **Multiple IK Solvers**:
-  - **CCD (Cyclic Coordinate Descent)**: Fast and efficient for simple chains
-  - **FABRIK (Forward And Backward Reaching Inverse Kinematics)**: Natural-looking motion with fast convergence
-  - **Jacobian**: Precise control suitable for robotics applications
-- **Comprehensive Joint System**:
-  - Revolute joints (rotation around an axis)
-  - Prismatic joints (translation along an axis)
-  - Spherical joints (rotation in any direction)
-  - Fixed joints (no movement)
-- **Constraint System**:
-  - Angle limits for revolute joints
-  - Distance limits for prismatic joints
-  - Cone limits for spherical joints
-- **Math Utilities**:
-  - Vector3: 3D vector operations
-  - Quaternion: Rotation representation
-  - Matrix4x4: Transformation matrices
+- 🤖 **Multiple IK Algorithms**: Analytical, Jacobian-based, CCD, FABRIK
+- 🚀 **Swift 6.1+ Ready**: Modern async/await with actor-based concurrency
+- 📱 **Cross-Platform**: iOS, macOS, tvOS, watchOS, visionOS, Linux
+- 🧮 **Comprehensive Math**: Vector3D, Quaternion, Transform, Matrix4x4
+- 🔧 **Flexible Design**: Protocol-based architecture for extensibility
+- ✅ **Well Tested**: 54+ comprehensive unit tests
+- 📚 **Type Safe**: Leverages Swift's advanced type system
+
+## Supported Algorithms
+
+### Analytical Solvers
+- **2-DOF Planar**: Standard 2-link planar arm configurations
+- **3-DOF Planar**: 3-link planar arms with orientation control
+- **Spherical Wrist**: 3-DOF spherical wrists (ZYZ, ZYX conventions)
+- **6-DOF**: Combined arm + wrist analytical solutions
+
+### Numerical Solvers
+- **Jacobian Transpose**: Simple gradient-based approach
+- **Damped Least Squares (DLS)**: Levenberg-Marquardt with damping
+- **Selectively Damped Least Squares (SDLS)**: SVD-based with selective damping
+- **Cyclic Coordinate Descent (CCD)**: Iterative joint optimization
+- **FABRIK**: Forward And Backward Reaching Inverse Kinematics
 
 ## Installation
 
 ### Swift Package Manager
 
-Add the following to your `Package.swift` file:
+Add this to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/apache-edge/inverse-kinematics.git", from: "0.0.1")
+    .package(url: "https://github.com/edgeengineer/inverse-kinematics.git", from: "0.0.1")
 ]
 ```
 
-Now in your target add:
+Or add it via Xcode:
+1. File → Add Package Dependencies
+2. Enter: `https://github.com/edgeengineer/inverse-kinematics`
+3. Select version `0.0.1` or later
 
-```swift
-.target(name: "YourTarget", dependencies: ["InverseKinematics"])
-```
+## Quick Start
 
-## Usage
-
-### Basic Example
-
-```swift
-import InverseKinematics
-
-// Create a simple arm with 3 joints
-let (chain, solver) = InverseKinematics.createSimpleArm(numJoints: 3, jointLength: 1.0, solverType: .ccd)
-
-// Set a target position for the end effector
-chain.setGoal(position: Vector3(x: 1, y: 1, z: 1))
-
-// Solve the IK problem
-let solved = solver.solve()
-
-if solved {
-    print("IK solved successfully!")
-} else {
-    print("Could not reach the target")
-}
-
-// Access the positions of all joints
-let joints = chain.getJointPath()
-for (index, joint) in joints.enumerated() {
-    print("Joint \(index) position: \(joint.worldPosition)")
-}
-```
-
-### Creating a Custom Chain
+### Basic Setup
 
 ```swift
 import InverseKinematics
 
-// Create joints
-let root = InverseKinematics.createFixedJoint()
-let shoulder = InverseKinematics.createRevoluteJoint(
-    axis: .up,
-    position: Vector3(x: 0, y: 0.5, z: 0),
-    minAngle: -.pi/2,
-    maxAngle: .pi/2,
-    length: 1.0
-)
-let elbow = InverseKinematics.createRevoluteJoint(
-    axis: .right,
-    position: Vector3(x: 0, y: 0, z: 1.0),
-    minAngle: 0,
-    maxAngle: .pi*0.75,
-    length: 1.0
-)
-let wrist = InverseKinematics.createSphericalJoint(
-    position: Vector3(x: 0, y: 0, z: 1.0),
-    coneAxis: .forward,
-    coneAngle: .pi/4,
-    length: 0.5
-)
-let endEffector = InverseKinematics.createFixedJoint(
-    position: Vector3(x: 0, y: 0, z: 0.5)
+// Create a 2-link planar robot
+var chain = KinematicChain(id: "robot_arm")
+
+// Add joints
+let shoulder = Joint(
+    id: "shoulder",
+    type: .revolute,
+    axis: Vector3D.unitZ,
+    limits: JointLimits(min: -Double.pi, max: Double.pi)
 )
 
-// Build hierarchy
-root.addChild(shoulder)
-shoulder.addChild(elbow)
-elbow.addChild(wrist)
-wrist.addChild(endEffector)
-
-// Create chain and solver
-let chain = InverseKinematics.createChain(
-    rootJoint: root,
-    endEffector: endEffector,
-    maxIterations: 30,
-    positionTolerance: 0.01,
-    orientationTolerance: 0.05
-)
-let solver = InverseKinematics.createSolver(type: .fabrik, chain: chain)
-
-// Set goal with both position and orientation
-chain.setGoal(
-    position: Vector3(x: 1, y: 1, z: 1),
-    orientation: Quaternion(axis: Vector3.up, angle: .pi/4)
+let elbow = Joint(
+    id: "elbow", 
+    type: .revolute,
+    axis: Vector3D.unitZ,
+    limits: JointLimits(min: -Double.pi/2, max: Double.pi/2),
+    parentTransform: Transform(position: Vector3D(x: 1.0, y: 0.0, z: 0.0))
 )
 
-// Solve
-solver.solve()
+// Add links
+let upperArm = Link(id: "upper_arm", length: 1.0)
+let forearm = Link(id: "forearm", length: 0.8)
+
+chain.addJoint(shoulder)
+chain.addJoint(elbow)
+chain.addLink(upperArm)
+chain.addLink(forearm)
 ```
 
-### Using Different Solvers
+### Forward Kinematics
 
 ```swift
-// CCD Solver (fast, good for simple chains)
-let ccdSolver = InverseKinematics.createSolver(type: .ccd, chain: chain)
-
-// FABRIK Solver (natural-looking results)
-let fabrikSolver = InverseKinematics.createSolver(type: .fabrik, chain: chain)
-
-// Jacobian Solver (precise, good for robotics)
-let jacobianSolver = InverseKinematics.createSolver(type: .jacobian, chain: chain)
+// Calculate end effector position
+let jointValues = [0.5, -0.3] // radians
+let endEffector = chain.endEffectorTransform(jointValues: jointValues)
+print("End effector at: \(endEffector.position)")
 ```
 
-## Advanced Features
-
-### Joint Constraints
+### Inverse Kinematics
 
 ```swift
-// Create a revolute joint with angle constraints
-let joint = InverseKinematics.createRevoluteJoint(
-    axis: .up,
-    minAngle: -.pi/4,  // -45 degrees
-    maxAngle: .pi/4    // 45 degrees
+// Create an IK solver
+let solver = JacobianBasedSolver(chain: chain)
+
+// Define target pose
+let target = Transform(
+    position: Vector3D(x: 1.5, y: 0.5, z: 0.0),
+    rotation: Quaternion.identity
 )
 
-// Create a prismatic joint with distance constraints
-let slider = InverseKinematics.createPrismaticJoint(
-    axis: .forward,
-    minDistance: 0,
-    maxDistance: 2.0
-)
-
-// Create a spherical joint with cone constraints
-let ball = InverseKinematics.createSphericalJoint(
-    coneAxis: .up,
-    coneAngle: .pi/3   // 60 degrees
-)
+// Solve IK
+do {
+    let solution = try await solver.solveIK(
+        target: target,
+        algorithm: .dampedLeastSquares,
+        parameters: IKParameters(tolerance: 1e-6, maxIterations: 100)
+    )
+    
+    if solution.success {
+        print("Solution found: \(solution.jointValues)")
+        print("Error: \(solution.error)")
+        print("Iterations: \(solution.iterations)")
+    }
+} catch {
+    print("IK failed: \(error)")
+}
 ```
 
-### Robotic Arm Example
+### Analytical Solvers
 
 ```swift
-// Create a robotic arm with specific joint configuration
-let (robotArm, solver) = InverseKinematics.createRoboticArm(solverType: .jacobian)
+// For simple 2-DOF planar cases
+let analyticalSolver = TwoDOFPlanarSolver(
+    link1Length: 1.0,
+    link2Length: 0.8
+)
 
-// Set target
-robotArm.setGoal(position: Vector3(x: 2, y: 1, z: 1))
-
-// Solve with high precision
-solver.solve()
+if let solution = analyticalSolver.solve(
+    target: Vector3D(x: 1.5, y: 0.5, z: 0.0),
+    elbowUp: true
+) {
+    print("Joint angles: \(solution.joint1), \(solution.joint2)")
+}
 ```
 
-## Performance Considerations
+### FABRIK Solver
 
-- CCD is the fastest solver but may produce less natural results
-- FABRIK offers a good balance between speed and quality
-- Jacobian is more computationally expensive but provides precise control
-- For real-time applications, consider:
-  - Limiting the maximum number of iterations
-  - Using a larger position/orientation tolerance
-  - Caching joint positions when possible
+```swift
+// Fast iterative solver
+let fabrikSolver = FABRIKSolver(chain: chain)
+
+let solution = try await fabrikSolver.solveIK(
+    target: target,
+    algorithm: .fabrik,
+    parameters: IKParameters(tolerance: 1e-3, maxIterations: 20)
+)
+```
+
+## Algorithm Selection Guide
+
+| Algorithm | Best For | Pros | Cons |
+|-----------|----------|------|------|
+| **Analytical** | Simple configurations | Exact, fast | Limited configurations |
+| **Jacobian Transpose** | Quick approximations | Simple, stable | Slow convergence |
+| **Damped Least Squares** | General purpose | Robust, handles singularities | Requires tuning |
+| **CCD** | Real-time applications | Fast, intuitive | Local minima |
+| **FABRIK** | Long kinematic chains | Fast, natural motion | Position-only |
+
+## Requirements
+
+- **Swift**: 6.1 or later
+- **iOS**: 13.0+
+- **macOS**: 13.0+
+- **tvOS**: 13.0+
+- **watchOS**: 6.0+
+- **visionOS**: 1.0+
+- **Linux**: Ubuntu 20.04+ (with Swift 6.1+)
+
+## Architecture
+
+```
+InverseKinematics/
+├── Math/                   # Core math types
+│   ├── Vector3D.swift
+│   ├── Quaternion.swift
+│   ├── Transform.swift
+│   └── Matrix4x4.swift
+├── Core/                   # Robotics structures
+│   ├── Joint.swift
+│   ├── Link.swift
+│   └── KinematicChain.swift
+├── Protocols/              # IK protocols
+│   └── KinematicsProtocols.swift
+└── Solvers/               # IK algorithms
+    ├── AnalyticalSolver.swift
+    ├── JacobianSolver.swift
+    ├── CCDSolver.swift
+    └── FABRIKSolver.swift
+```
+
+## Performance
+
+- **Optimized math operations** with efficient algorithms
+- **Actor-based concurrency** for thread safety
+- **Value semantics** for predictable performance
+- **Minimal allocations** in hot paths
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+Please ensure all tests pass with `swift test`.
+
+## Testing
+
+Run the comprehensive test suite:
+
+```bash
+swift test
+```
+
+The library includes 54+ tests covering:
+- Math type operations
+- Forward kinematics validation
+- IK solver correctness
+- Edge cases and error conditions
 
 ## License
 
-This library is available under the Apache License 2.0. See the LICENSE file for more info.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Inspired by modern robotics research and industry best practices
+- Built with Swift 6.1's advanced concurrency features
+- Designed for both research and production applications
+
+---
+
+Made with ❤️ for the Swift robotics community

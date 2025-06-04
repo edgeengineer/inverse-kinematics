@@ -1,285 +1,482 @@
-//
-//  FABRIKSolver.swift
-//  InverseKinematics
-//
-//  Forward And Backward Reaching Inverse Kinematics solver implementation
-//
-
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#elseif canImport(Foundation)
 import Foundation
-#endif
 
-/// FABRIK (Forward And Backward Reaching Inverse Kinematics) solver
-/// Adjusts joint positions iteratively in forward and backward passes
-public class FABRIKSolver: IKSolver {
-    /// The chain this solver operates on
-    public let chain: IKChain
+public actor FABRIKSolver: InverseKinematicsSolvable {
+    private let chain: KinematicChain
+    private let linkLengths: [Double]
+    private let totalLength: Double
     
-    /// Whether to maintain bone lengths during solving
-    public var maintainBoneLengths: Bool = true
-    
-    /// Initializes the solver with an IK chain
-    public required init(chain: IKChain) {
+    public init(chain: KinematicChain) {
         self.chain = chain
+        self.linkLengths = chain.links.map { $0.length }
+        self.totalLength = linkLengths.reduce(0, +)
     }
     
-    /// Solves the IK problem for the chain using FABRIK
-    /// - Returns: True if the solution converged, false otherwise
-    public func solve() -> Bool {
-        guard let _ = chain.endEffector,
-              let goal = chain.goal,
-              let targetPosition = goal.position else {
-            return false
+    public nonisolated var supportedAlgorithms: [IKAlgorithmType] {
+        [.fabrik]
+    }
+    
+    public nonisolated var jointCount: Int {
+        chain.jointCount
+    }
+    
+    public nonisolated var jointLimits: [JointLimits] {
+        chain.joints.map { $0.limits }
+    }
+    
+    public nonisolated func calculateEndEffector(jointValues: [Double]) -> Transform {
+        chain.endEffectorTransform(jointValues: jointValues)
+    }
+    
+    public nonisolated func calculateJointTransforms(jointValues: [Double]) -> [Transform] {
+        chain.forwardKinematics(jointValues: jointValues)
+    }
+    
+    public nonisolated func calculateJacobian(jointValues: [Double], epsilon: Double = 1e-6) -> [[Double]] {
+        chain.jacobian(jointValues: jointValues, epsilon: epsilon)
+    }
+    
+    public func solveIK(
+        target: Transform,
+        initialGuess: [Double]?,
+        algorithm: IKAlgorithmType,
+        parameters: IKParameters
+    ) async throws -> IKSolution {
+        guard algorithm == .fabrik else {
+            throw IKError.unsupportedAlgorithm(algorithm)
         }
         
-        // Get the joint path from root to end effector
-        let jointPath = chain.getJointPath()
-        
-        // Store the original positions of all joints
-        var originalPositions: [Vector3] = []
-        for joint in jointPath {
-            originalPositions.append(joint.worldPosition)
+        let startValues = initialGuess ?? generateInitialGuess()
+        guard startValues.count == jointCount else {
+            throw IKError.invalidJointCount(expected: jointCount, actual: startValues.count)
         }
         
-        // Check if the target is reachable
-        let rootPosition = jointPath.first!.worldPosition
-        var totalChainLength: Float = 0
+        return try await solveFABRIK(target: target, initialGuess: startValues, parameters: parameters)
+    }
+    
+    private func solveFABRIK(
+        target: Transform,
+        initialGuess: [Double],
+        parameters: IKParameters
+    ) async throws -> IKSolution {
+        let basePosition = chain.baseTransform.position
+        let targetPosition = target.position
+        let distanceToTarget = basePosition.distance(to: targetPosition)
         
-        for i in 1..<jointPath.count {
-            let joint = jointPath[i]
-            let parent = jointPath[i-1]
-            totalChainLength += joint.worldPosition.distance(to: parent.worldPosition)
+        if distanceToTarget > totalLength {
+            let direction = (targetPosition - basePosition).normalized
+            let reachableTarget = basePosition + direction * totalLength
+            return try await solveFABRIKInternal(target: reachableTarget, initialGuess: initialGuess, parameters: parameters, originalTarget: targetPosition)
+        } else {
+            return try await solveFABRIKInternal(target: targetPosition, initialGuess: initialGuess, parameters: parameters, originalTarget: targetPosition)
         }
+    }
+    
+    private func solveFABRIKInternal(
+        target: Vector3D,
+        initialGuess: [Double],
+        parameters: IKParameters,
+        originalTarget: Vector3D
+    ) async throws -> IKSolution {
+        var convergenceHistory: [Double] = []
+        let basePosition = chain.baseTransform.position
         
-        let distanceToTarget = rootPosition.distance(to: targetPosition)
-        let targetIsReachable = distanceToTarget <= totalChainLength
+        var jointPositions = calculateInitialJointPositions(from: initialGuess)
         
-        // Maximum number of iterations
-        let maxIterations = 100 // Increased from 50
-        
-        // Initialize variables
-        var iteration = 0
-        var converged = false
-        
-        // Main loop
-        while !converged && iteration < maxIterations {
-            // Forward reaching phase - move end effector to target
-            var positions = [Vector3](repeating: Vector3.zero, count: jointPath.count)
+        for iteration in 0..<parameters.maxIterations {
+            let currentError = jointPositions.last?.distance(to: originalTarget) ?? .infinity
+            convergenceHistory.append(currentError)
             
-            // Set the end effector position to the target
-            positions[positions.count - 1] = targetPosition
-            
-            // Forward reaching - work backwards from the target
-            for i in (0..<jointPath.count - 1).reversed() {
-                let _ = jointPath[i]
-                let _ = jointPath[i + 1]
-                
-                // Direction from child to current joint
-                let direction = (originalPositions[i] - originalPositions[i + 1]).normalized
-                
-                // Distance between joints
-                let distance = originalPositions[i].distance(to: originalPositions[i + 1])
-                
-                // New position of current joint
-                positions[i] = positions[i + 1] + direction * distance
+            if currentError < parameters.tolerance {
+                let jointAngles = calculateJointAngles(from: jointPositions)
+                return IKSolution(
+                    jointValues: clampJointValues(jointAngles),
+                    success: true,
+                    error: currentError,
+                    iterations: iteration,
+                    algorithm: .fabrik,
+                    convergenceHistory: convergenceHistory
+                )
             }
             
-            // Backward reaching phase - fix the root
-            positions[0] = rootPosition
+            jointPositions = forwardReaching(jointPositions: jointPositions, target: target)
+            jointPositions = backwardReaching(jointPositions: jointPositions, base: basePosition)
             
-            // Backward reaching - work forwards from the root
-            for i in 0..<jointPath.count - 1 {
-                let _ = jointPath[i]
-                let _ = jointPath[i + 1]
-                
-                // Direction from current to child joint
+            applyJointConstraints(&jointPositions)
+        }
+        
+        let finalJointAngles = calculateJointAngles(from: jointPositions)
+        
+        return IKSolution(
+            jointValues: clampJointValues(finalJointAngles),
+            success: false,
+            error: convergenceHistory.last ?? .infinity,
+            iterations: parameters.maxIterations,
+            algorithm: .fabrik,
+            convergenceHistory: convergenceHistory
+        )
+    }
+    
+    private func calculateInitialJointPositions(from jointValues: [Double]) -> [Vector3D] {
+        let transforms = calculateJointTransforms(jointValues: jointValues)
+        return transforms.map { $0.position }
+    }
+    
+    private func forwardReaching(jointPositions: [Vector3D], target: Vector3D) -> [Vector3D] {
+        var positions = jointPositions
+        
+        if !positions.isEmpty {
+            positions[positions.count - 1] = target
+            
+            for i in (0..<positions.count - 1).reversed() {
+                let direction = (positions[i] - positions[i + 1]).normalized
+                positions[i] = positions[i + 1] + direction * linkLengths[i]
+            }
+        }
+        
+        return positions
+    }
+    
+    private func backwardReaching(jointPositions: [Vector3D], base: Vector3D) -> [Vector3D] {
+        var positions = jointPositions
+        
+        if !positions.isEmpty {
+            positions[0] = base
+            
+            for i in 0..<positions.count - 1 {
                 let direction = (positions[i + 1] - positions[i]).normalized
-                
-                // Distance between joints
-                let distance = originalPositions[i].distance(to: originalPositions[i + 1])
-                
-                // New position of child joint
-                positions[i + 1] = positions[i] + direction * distance
-            }
-            
-            // Apply the new positions to the joints
-            for i in 1..<jointPath.count {
-                let joint = jointPath[i]
-                let parent = jointPath[i-1]
-                
-                // Calculate the new local position
-                // Convert from world to local space
-                let worldPosition = positions[i]
-                let parentWorldPosition = parent.worldPosition
-                let parentWorldRotation = parent.worldRotation
-                
-                // Calculate the vector from parent to joint in world space
-                let worldOffset = worldPosition - parentWorldPosition
-                
-                // Convert to local space by applying the inverse of parent's rotation
-                let localOffset = parentWorldRotation.inverse.rotate(worldOffset)
-                
-                // Set the new local position
-                joint.localPosition = localOffset
-                
-                // Apply constraints
-                joint.applyConstraints()
-            }
-            
-            // Check if we've converged
-            if chain.hasConverged() {
-                converged = true
-                break
-            }
-            
-            // If the target is unreachable and we're not making progress, try a more direct approach
-            if !targetIsReachable && iteration > 20 && !converged {
-                // For unreachable targets, try to get as close as possible
-                // This is a general approach, not a special case
-                
-                // Get the direction from root to target
-                let rootToTarget = (targetPosition - rootPosition).normalized
-                
-                // For each joint, try to align it towards the target
-                for i in 1..<jointPath.count - 1 {
-                    let joint = jointPath[i]
-                    
-                    if joint.type.isRevolute || joint.type.isSpherical {
-                        // Get the current direction from joint to its child
-                        let childPosition = jointPath[i + 1].worldPosition
-                        let currentDirection = (childPosition - joint.worldPosition).normalized
-                        
-                        // Calculate the rotation to align towards the target
-                        let rotationAxis = currentDirection.cross(rootToTarget).normalized
-                        let angle = acos(currentDirection.dot(rootToTarget).clamped(to: -1...1))
-                        
-                        // Apply a partial rotation to avoid overshooting
-                        let rotation = Quaternion(axis: rotationAxis, angle: angle * 0.3)
-                        joint.localRotation = rotation * joint.localRotation
-                        
-                        // Apply constraints
-                        joint.applyConstraints()
-                    }
-                }
-            }
-            
-            // Increment the iteration counter
-            iteration += 1
-            
-            // Update original positions for the next iteration
-            for i in 0..<jointPath.count {
-                originalPositions[i] = jointPath[i].worldPosition
+                positions[i + 1] = positions[i] + direction * linkLengths[i]
             }
         }
         
-        // Return true if we've converged, false otherwise
-        return chain.hasConverged()
+        return positions
     }
     
-    private func updateJointRotations(jointPath: [Joint]) {
-        for i in 0..<jointPath.count {
-            let joint = jointPath[i]
+    private func applyJointConstraints(_ jointPositions: inout [Vector3D]) {
+        for i in 0..<min(jointPositions.count - 1, jointLimits.count) {
+            let limits = jointLimits[i]
             
-            // Update positions for all joints
-            if let parentJoint = joint.parent {
-                let parentWorldPos = parentJoint.worldPosition
-                let parentWorldRot = parentJoint.worldRotation
+            if limits.min.isFinite && limits.max.isFinite {
+                let currentAngle = calculateJointAngle(
+                    previous: i > 0 ? jointPositions[i - 1] : chain.baseTransform.position,
+                    current: jointPositions[i],
+                    next: jointPositions[i + 1]
+                )
                 
-                // Calculate the new local position
-                let newWorldPos = joint.worldPosition
-                let localPos = parentWorldRot.inverse.rotate(newWorldPos - parentWorldPos)
-                
-                // Update joint local position for prismatic joints
-                if case .prismatic = joint.type {
-                    joint.localPosition = localPos
+                if !limits.contains(currentAngle) {
+                    let clampedAngle = limits.clamp(currentAngle)
+                    applyJointAngle(
+                        &jointPositions,
+                        jointIndex: i,
+                        angle: clampedAngle
+                    )
                 }
             }
+        }
+    }
+    
+    private func calculateJointAngle(previous: Vector3D, current: Vector3D, next: Vector3D) -> Double {
+        let v1 = (previous - current).normalized
+        let v2 = (next - current).normalized
+        
+        let dot = v1.dot(v2)
+        let clampedDot = max(-1.0, min(1.0, dot))
+        
+        return acos(clampedDot)
+    }
+    
+    private func applyJointAngle(_ jointPositions: inout [Vector3D], jointIndex: Int, angle: Double) {
+        guard jointIndex < jointPositions.count - 1 else { return }
+        
+        let current = jointPositions[jointIndex]
+        let next = jointPositions[jointIndex + 1]
+        let direction = (next - current).normalized
+        
+        let rotationAxis = Vector3D.unitZ
+        let rotation = Quaternion(axis: rotationAxis, angle: angle)
+        let newDirection = rotation.rotate(direction)
+        
+        jointPositions[jointIndex + 1] = current + newDirection * linkLengths[jointIndex]
+    }
+    
+    private func calculateJointAngles(from jointPositions: [Vector3D]) -> [Double] {
+        var angles: [Double] = []
+        
+        // Ensure we return correct number of joint values
+        for i in 0..<chain.joints.count {
+            let angle: Double
             
-            // Update rotations for all joints except the end effector
-            if i < jointPath.count - 1 {
-                // Calculate the original direction to the next joint
-                let originalDir = (jointPath[i + 1].worldPosition - jointPath[i].worldPosition).normalized
+            if i < jointPositions.count {
+                // Use forward kinematics to determine actual joint angles
+                let currentPosition = jointPositions[i]
                 
-                // Calculate the new direction to the next joint
-                let newDir = (jointPath[i + 1].worldPosition - jointPath[i].worldPosition).normalized
+                switch chain.joints[i].type {
+                case .revolute:
+                    // Simple angle calculation for planar robot
+                    angle = atan2(currentPosition.y, currentPosition.x)
+                case .prismatic:
+                    angle = currentPosition.magnitude
+                default:
+                    angle = 0.0
+                }
+            } else {
+                angle = 0.0
+            }
+            
+            angles.append(angle)
+        }
+        
+        return angles
+    }
+}
+
+public actor AdvancedFABRIKSolver: InverseKinematicsSolvable {
+    private let chain: KinematicChain
+    private let linkLengths: [Double]
+    private let totalLength: Double
+    private let subBaseIndices: [Int]
+    
+    public init(chain: KinematicChain, subBaseIndices: [Int] = []) {
+        self.chain = chain
+        self.linkLengths = chain.links.map { $0.length }
+        self.totalLength = linkLengths.reduce(0, +)
+        self.subBaseIndices = subBaseIndices
+    }
+    
+    public nonisolated var supportedAlgorithms: [IKAlgorithmType] {
+        [.fabrik]
+    }
+    
+    public nonisolated var jointCount: Int {
+        chain.jointCount
+    }
+    
+    public nonisolated var jointLimits: [JointLimits] {
+        chain.joints.map { $0.limits }
+    }
+    
+    public nonisolated func calculateEndEffector(jointValues: [Double]) -> Transform {
+        chain.endEffectorTransform(jointValues: jointValues)
+    }
+    
+    public nonisolated func calculateJointTransforms(jointValues: [Double]) -> [Transform] {
+        chain.forwardKinematics(jointValues: jointValues)
+    }
+    
+    public nonisolated func calculateJacobian(jointValues: [Double], epsilon: Double = 1e-6) -> [[Double]] {
+        chain.jacobian(jointValues: jointValues, epsilon: epsilon)
+    }
+    
+    public func solveIK(
+        target: Transform,
+        initialGuess: [Double]?,
+        algorithm: IKAlgorithmType,
+        parameters: IKParameters
+    ) async throws -> IKSolution {
+        guard algorithm == .fabrik else {
+            throw IKError.unsupportedAlgorithm(algorithm)
+        }
+        
+        let startValues = initialGuess ?? generateInitialGuess()
+        guard startValues.count == jointCount else {
+            throw IKError.invalidJointCount(expected: jointCount, actual: startValues.count)
+        }
+        
+        return try await solveAdvancedFABRIK(target: target, initialGuess: startValues, parameters: parameters)
+    }
+    
+    private func solveAdvancedFABRIK(
+        target: Transform,
+        initialGuess: [Double],
+        parameters: IKParameters
+    ) async throws -> IKSolution {
+        var convergenceHistory: [Double] = []
+        var jointPositions = calculateInitialJointPositions(from: initialGuess)
+        
+        let basePosition = chain.baseTransform.position
+        let targetPosition = target.position
+        
+        for iteration in 0..<parameters.maxIterations {
+            let currentError = calculatePositionError(jointPositions: jointPositions, target: targetPosition)
+            convergenceHistory.append(currentError)
+            
+            if currentError < parameters.tolerance {
+                let jointAngles = calculateJointAngles(from: jointPositions)
+                return IKSolution(
+                    jointValues: clampJointValues(jointAngles),
+                    success: true,
+                    error: currentError,
+                    iterations: iteration,
+                    algorithm: .fabrik,
+                    convergenceHistory: convergenceHistory
+                )
+            }
+            
+            jointPositions = performMultiChainFABRIK(
+                jointPositions: jointPositions,
+                target: targetPosition,
+                base: basePosition
+            )
+            
+            applyAdvancedJointConstraints(&jointPositions)
+        }
+        
+        let finalJointAngles = calculateJointAngles(from: jointPositions)
+        
+        return IKSolution(
+            jointValues: clampJointValues(finalJointAngles),
+            success: false,
+            error: convergenceHistory.last ?? .infinity,
+            iterations: parameters.maxIterations,
+            algorithm: .fabrik,
+            convergenceHistory: convergenceHistory
+        )
+    }
+    
+    private func performMultiChainFABRIK(
+        jointPositions: [Vector3D],
+        target: Vector3D,
+        base: Vector3D
+    ) -> [Vector3D] {
+        var positions = jointPositions
+        
+        if subBaseIndices.isEmpty {
+            positions = forwardReaching(jointPositions: positions, target: target)
+            positions = backwardReaching(jointPositions: positions, base: base)
+        } else {
+            for subBaseIndex in subBaseIndices.reversed() {
+                let subChainStart = subBaseIndex
+                let subChainEnd = positions.count - 1
                 
-                // Find the rotation that aligns the original direction with the new direction
-                let rotationFromTo = Quaternion.fromToRotation(originalDir, newDir)
-                
-                // Apply this rotation to the joint's original rotation
-                let newWorldRot = joint.worldRotation * rotationFromTo
-                
-                // Convert to local rotation
-                if let parent = joint.parent {
-                    let parentWorldRot = parent.worldRotation
-                    let localRot = parentWorldRot.inverse * newWorldRot
+                if subChainStart < subChainEnd {
+                    var subChain = Array(positions[subChainStart...subChainEnd])
+                    subChain = forwardReaching(jointPositions: subChain, target: target)
+                    subChain = backwardReaching(jointPositions: subChain, base: positions[subChainStart])
                     
-                    // Apply rotation based on joint type
-                    switch joint.type {
-                    case .revolute(let axis):
-                        // Extract rotation around the specified axis
-                        let angle = localRot.angleAround(axis: axis)
-                        let axisRotation = Quaternion(axis: axis, angle: angle)
-                        joint.localRotation = axisRotation
-                        
-                    case .spherical:
-                        joint.localRotation = localRot
-                        
-                    case .fixed, .prismatic:
-                        // Don't change rotation for fixed or prismatic joints
-                        break
+                    for i in 0..<subChain.count {
+                        positions[subChainStart + i] = subChain[i]
                     }
-                    
-                    // Apply constraints
-                    joint.applyConstraints()
-                } else {
-                    joint.localRotation = newWorldRot
+                }
+            }
+        }
+        
+        return positions
+    }
+    
+    private func calculateInitialJointPositions(from jointValues: [Double]) -> [Vector3D] {
+        let transforms = calculateJointTransforms(jointValues: jointValues)
+        return transforms.map { $0.position }
+    }
+    
+    private func forwardReaching(jointPositions: [Vector3D], target: Vector3D) -> [Vector3D] {
+        var positions = jointPositions
+        
+        if !positions.isEmpty {
+            positions[positions.count - 1] = target
+            
+            for i in (0..<positions.count - 1).reversed() {
+                let segmentIndex = min(i, linkLengths.count - 1)
+                let direction = (positions[i] - positions[i + 1]).normalized
+                positions[i] = positions[i + 1] + direction * linkLengths[segmentIndex]
+            }
+        }
+        
+        return positions
+    }
+    
+    private func backwardReaching(jointPositions: [Vector3D], base: Vector3D) -> [Vector3D] {
+        var positions = jointPositions
+        
+        if !positions.isEmpty {
+            positions[0] = base
+            
+            for i in 0..<positions.count - 1 {
+                let segmentIndex = min(i, linkLengths.count - 1)
+                let direction = (positions[i + 1] - positions[i]).normalized
+                positions[i + 1] = positions[i] + direction * linkLengths[segmentIndex]
+            }
+        }
+        
+        return positions
+    }
+    
+    private func applyAdvancedJointConstraints(_ jointPositions: inout [Vector3D]) {
+        for i in 0..<min(jointPositions.count, jointLimits.count) {
+            let limits = jointLimits[i]
+            
+            if limits.min.isFinite && limits.max.isFinite {
+                let currentAngle = calculateJointAngleAtIndex(jointPositions, index: i)
+                
+                if !limits.contains(currentAngle) {
+                    let clampedAngle = limits.clamp(currentAngle)
+                    applyJointAngleAtIndex(&jointPositions, index: i, angle: clampedAngle)
                 }
             }
         }
     }
-}
-
-extension Joint {
-    func worldToLocalPosition(_ worldPosition: Vector3) -> Vector3 {
-        let parentWorldRot = self.parent?.worldRotation ?? Quaternion.identity
-        let parentWorldPos = self.parent?.worldPosition ?? Vector3.zero
-        let localPosition = parentWorldRot.inverse.rotate(worldPosition - parentWorldPos)
-        return localPosition
+    
+    private func calculateJointAngleAtIndex(_ jointPositions: [Vector3D], index: Int) -> Double {
+        guard index > 0 && index < jointPositions.count - 1 else { return 0.0 }
+        
+        let previous = jointPositions[index - 1]
+        let current = jointPositions[index]
+        let next = jointPositions[index + 1]
+        
+        let v1 = (previous - current).normalized
+        let v2 = (next - current).normalized
+        
+        let dot = v1.dot(v2)
+        let clampedDot = max(-1.0, min(1.0, dot))
+        
+        return acos(clampedDot)
     }
-}
-
-// MARK: - Helper Extensions
-
-extension Quaternion {
-    /// Creates a rotation that rotates from one direction to another
-    static func fromToRotation(_ from: Vector3, _ to: Vector3) -> Quaternion {
-        let normalizedFrom = from.normalized
-        let normalizedTo = to.normalized
+    
+    private func applyJointAngleAtIndex(_ jointPositions: inout [Vector3D], index: Int, angle: Double) {
+        guard index < jointPositions.count - 1 else { return }
         
-        let dot = normalizedFrom.dot(normalizedTo)
+        let current = jointPositions[index]
+        let next = jointPositions[index + 1]
+        let direction = (next - current).normalized
         
-        // If vectors are nearly parallel
-        if dot > 0.99999 {
-            return .identity
-        }
+        let rotationAxis = Vector3D.unitZ
+        let rotation = Quaternion(axis: rotationAxis, angle: angle)
+        let newDirection = rotation.rotate(direction)
         
-        // If vectors are nearly opposite
-        if dot < -0.99999 {
-            // Find an axis perpendicular to from
-            var axis = Vector3.right.cross(normalizedFrom)
-            if axis.squaredMagnitude < 1e-6 {
-                axis = Vector3.up.cross(normalizedFrom)
+        let segmentIndex = min(index, linkLengths.count - 1)
+        jointPositions[index + 1] = current + newDirection * linkLengths[segmentIndex]
+    }
+    
+    private func calculatePositionError(jointPositions: [Vector3D], target: Vector3D) -> Double {
+        guard let endEffectorPos = jointPositions.last else { return .infinity }
+        return endEffectorPos.distance(to: target)
+    }
+    
+    private func calculateJointAngles(from jointPositions: [Vector3D]) -> [Double] {
+        var angles: [Double] = []
+        
+        // Ensure we return correct number of joint values
+        for i in 0..<chain.joints.count {
+            let angle: Double
+            
+            if i < jointPositions.count {
+                // Use forward kinematics to determine actual joint angles
+                let currentPosition = jointPositions[i]
+                
+                switch chain.joints[i].type {
+                case .revolute:
+                    // Simple angle calculation for planar robot
+                    angle = atan2(currentPosition.y, currentPosition.x)
+                case .prismatic:
+                    angle = currentPosition.magnitude
+                default:
+                    angle = 0.0
+                }
+            } else {
+                angle = 0.0
             }
-            return Quaternion(axis: axis.normalized, angle: .pi)
+            
+            angles.append(angle)
         }
         
-        // General case
-        let rotationAxis = normalizedFrom.cross(normalizedTo)
-        let angle = acos(dot)
-        
-        return Quaternion(axis: rotationAxis.normalized, angle: angle)
+        return angles
     }
 }
