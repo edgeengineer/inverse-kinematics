@@ -18,11 +18,15 @@ let package = Package(
             targets: ["InverseKinematics"]
         ),
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/keyvariable/kvSIMD.swift.git", from: "1.1.0")
+    ],
     targets: [
         .target(
             name: "InverseKinematics",
-            dependencies: [],
+            dependencies: [
+                .product(name: "kvSIMD", package: "kvSIMD.swift")
+            ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")
             ]
