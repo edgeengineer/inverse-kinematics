@@ -64,5 +64,3 @@ jobs:
     - name: Check Package Dependencies
       run: swift package show-dependencies
     
-    - name: Build Documentation
-      run: swift package generate-documentation
