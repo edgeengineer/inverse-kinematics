@@ -127,7 +127,7 @@ do {
 ### Analytical Solvers
 
 ```swift
-// For simple 2-DOF planar cases
+// Direct utility functions for specific configurations
 let analyticalSolver = TwoDOFPlanarSolver(
     link1Length: 1.0,
     link2Length: 0.8
@@ -138,6 +138,23 @@ if let solution = analyticalSolver.solve(
     elbowUp: true
 ) {
     print("Joint angles: \(solution.joint1), \(solution.joint2)")
+}
+
+// Or use protocol-conforming analytical solver with KinematicChain
+let protocolSolver = AnalyticalSolver(chain: chain, type: .twoDOFPlanar)
+
+do {
+    let solution = try await protocolSolver.solveIK(
+        target: target,
+        algorithm: .analytical,
+        parameters: .default
+    )
+    
+    if solution.success {
+        print("Analytical solution: \(solution.jointValues)")
+    }
+} catch {
+    print("Analytical solve failed: \(error)")
 }
 ```
 

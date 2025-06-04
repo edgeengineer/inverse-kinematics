@@ -168,3 +168,149 @@ public struct SixDOFAnalyticalSolver: Sendable {
         return t1 * t2 * t3
     }
 }
+
+// MARK: - Protocol-Conforming Analytical Solver
+
+public actor AnalyticalSolver: InverseKinematicsSolvable {
+    private let chain: KinematicChain
+    private let solverType: AnalyticalSolverType
+    
+    public enum AnalyticalSolverType: Sendable {
+        case twoDOFPlanar
+        case threeDOFPlanar
+        case sixDOF
+        case detectFromChain
+    }
+    
+    public init(chain: KinematicChain, type: AnalyticalSolverType = .detectFromChain) {
+        self.chain = chain
+        self.solverType = type == .detectFromChain ? Self.detectSolverType(from: chain) : type
+    }
+    
+    public nonisolated var supportedAlgorithms: [IKAlgorithmType] {
+        [.analytical]
+    }
+    
+    public nonisolated var jointCount: Int {
+        chain.jointCount
+    }
+    
+    public nonisolated var jointLimits: [JointLimits] {
+        chain.joints.map { $0.limits }
+    }
+    
+    public nonisolated func calculateEndEffector(jointValues: [Double]) -> Transform {
+        chain.endEffectorTransform(jointValues: jointValues)
+    }
+    
+    public nonisolated func calculateJointTransforms(jointValues: [Double]) -> [Transform] {
+        chain.forwardKinematics(jointValues: jointValues)
+    }
+    
+    public nonisolated func calculateJacobian(jointValues: [Double], epsilon: Double = 1e-6) -> [[Double]] {
+        chain.jacobian(jointValues: jointValues, epsilon: epsilon)
+    }
+    
+    public func solveIK(
+        target: Transform,
+        initialGuess: [Double]?,
+        algorithm: IKAlgorithmType,
+        parameters: IKParameters
+    ) async throws -> IKSolution {
+        guard algorithm == .analytical else {
+            throw IKError.unsupportedAlgorithm(algorithm)
+        }
+        
+        let solution: [Double]?
+        
+        switch solverType {
+        case .twoDOFPlanar, .detectFromChain:
+            guard jointCount == 2 else {
+                throw IKError.invalidJointCount(expected: 2, actual: jointCount)
+            }
+            let linkLengths = chain.links.map { $0.length }
+            guard linkLengths.count >= 2 else {
+                throw IKError.invalidParameters("Insufficient links for 2DOF solver")
+            }
+            
+            let solver = TwoDOFPlanarSolver(link1Length: linkLengths[0], link2Length: linkLengths[1])
+            if let result = solver.solve(target: target.position) {
+                solution = [result.joint1, result.joint2]
+            } else {
+                solution = nil
+            }
+            
+        case .threeDOFPlanar:
+            guard jointCount == 3 else {
+                throw IKError.invalidJointCount(expected: 3, actual: jointCount)
+            }
+            let linkLengths = chain.links.map { $0.length }
+            guard linkLengths.count >= 3 else {
+                throw IKError.invalidParameters("Insufficient links for 3DOF solver")
+            }
+            
+            let solver = ThreeDOFPlanarSolver(
+                link1Length: linkLengths[0],
+                link2Length: linkLengths[1],
+                link3Length: linkLengths[2]
+            )
+            if let result = solver.solve(target: target) {
+                solution = [result.joint1, result.joint2, result.joint3]
+            } else {
+                solution = nil
+            }
+            
+        case .sixDOF:
+            guard jointCount == 6 else {
+                throw IKError.invalidJointCount(expected: 6, actual: jointCount)
+            }
+            let linkLengths = chain.links.map { $0.length }
+            guard linkLengths.count >= 3 else {
+                throw IKError.invalidParameters("Insufficient links for 6DOF solver")
+            }
+            
+            let solver = SixDOFAnalyticalSolver(
+                link1Length: linkLengths[0],
+                link2Length: linkLengths[1],
+                link3Length: linkLengths[2]
+            )
+            solution = solver.solve(target: target)
+        }
+        
+        guard let jointValues = solution else {
+            return IKSolution(
+                jointValues: initialGuess ?? Array(repeating: 0.0, count: jointCount),
+                success: false,
+                error: .infinity,
+                iterations: 1,
+                algorithm: .analytical
+            )
+        }
+        
+        let clampedValues = clampJointValues(jointValues)
+        let currentTransform = calculateEndEffector(jointValues: clampedValues)
+        let error = calculateError(target: target, current: currentTransform, parameters: parameters)
+        
+        return IKSolution(
+            jointValues: clampedValues,
+            success: true,
+            error: error,
+            iterations: 1,
+            algorithm: .analytical
+        )
+    }
+    
+    private static func detectSolverType(from chain: KinematicChain) -> AnalyticalSolverType {
+        switch chain.jointCount {
+        case 2:
+            return .twoDOFPlanar
+        case 3:
+            return .threeDOFPlanar
+        case 6:
+            return .sixDOF
+        default:
+            return .twoDOFPlanar // Default fallback
+        }
+    }
+}
+

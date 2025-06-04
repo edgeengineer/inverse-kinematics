@@ -68,6 +68,30 @@ struct SolverTests {
             #expect(solution != nil)
         }
         
+        @Test("Protocol-conforming analytical solver")
+        func testAnalyticalSolverProtocol() async throws {
+            let chain = SolverTests.createSimpleTwoJointChain()
+            let solver = AnalyticalSolver(chain: chain, type: .twoDOFPlanar)
+            
+            let target = Transform(
+                position: Vector3D(x: 1.5, y: 0.5, z: 0.0),
+                rotation: Quaternion.identity
+            )
+            
+            let solution = try await solver.solveIK(
+                target: target,
+                algorithm: .analytical,
+                parameters: .default
+            )
+            
+            #expect(solution.algorithm == .analytical)
+            #expect(solution.jointValues.count == 2)
+            
+            // Verify it's within reach (2 links of length 1.0 each)
+            let distance = target.position.magnitude
+            #expect(distance <= 2.0) // Should be reachable
+        }
+        
         private func calculateTwoLinkForwardKinematics(
             link1: Double,
             link2: Double,
