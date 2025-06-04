@@ -14,7 +14,7 @@ A comprehensive, cross-platform Swift library for robotics inverse kinematics wi
 - 📱 **Cross-Platform**: iOS, macOS, tvOS, watchOS, visionOS, Linux (Swift 6.1+)
 - 🧮 **Comprehensive Math**: Vector3D, Quaternion, Transform, Matrix4x4
 - 🔧 **Flexible Design**: Protocol-based architecture for extensibility
-- ✅ **Well Tested**: 55+ comprehensive unit tests
+- ✅ **Well Tested**: 150+ comprehensive unit tests
 - 📚 **Type Safe**: Leverages Swift's advanced type system
 - ⚡ **Optimized**: Uses FoundationEssentials when available for better performance
 
@@ -379,7 +379,7 @@ Run the comprehensive test suite:
 swift test
 ```
 
-The library includes 55+ tests covering:
+The library includes 165+ tests covering:
 - Math type operations
 - Forward kinematics validation
 - IK solver correctness

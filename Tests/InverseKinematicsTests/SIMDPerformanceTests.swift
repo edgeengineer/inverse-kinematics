@@ -17,6 +17,18 @@ struct SIMDPerformanceTests {
         Quaternion(axis: Vector3D.unitZ, angle: Double(i) * 0.01)
     }
     
+    // MARK: - Performance Configuration
+    
+    /// Maximum acceptable time for standard operations (baseline threshold)
+    static let maxStandardOperationTime: Double = 0.1 // 100ms
+    
+    /// Maximum acceptable performance degradation ratio (e.g., 10.0 means SIMD shouldn't be more than 10x slower)
+    static let maxPerformanceDegradationRatio: Double = 10.0
+    
+    /// Minimum expected speedup for SIMD to be considered beneficial (1.0 = no slower than standard)
+    /// Set to 0.1 to account for system performance variations, debug builds, and SIMD overhead
+    static let minExpectedSpeedupRatio: Double = 0.1
+    
     @Test("SIMD Vector3D operations work correctly")
     func testSIMDVector3DCorrectness() {
         let v1 = Vector3D(x: 1.0, y: 2.0, z: 3.0)
@@ -104,55 +116,67 @@ struct SIMDPerformanceTests {
         let simdVectors = testVectors.map { $0.simd }
         
         // Test vector addition performance
-        let startTimeStandard = CFAbsoluteTimeGetCurrent()
-        for i in 0..<testVectors.count - 1 {
-            _ = testVectors[i] + testVectors[i + 1]
+        let standardTime = measureTime {
+            for i in 0..<testVectors.count - 1 {
+                _ = testVectors[i] + testVectors[i + 1]
+            }
         }
-        let standardTime = CFAbsoluteTimeGetCurrent() - startTimeStandard
         
-        let startTimeSIMD = CFAbsoluteTimeGetCurrent()
-        for i in 0..<simdVectors.count - 1 {
-            _ = simdVectors[i] + simdVectors[i + 1]
+        let simdTime = measureTime {
+            for i in 0..<simdVectors.count - 1 {
+                _ = simdVectors[i] + simdVectors[i + 1]
+            }
         }
-        let simdTime = CFAbsoluteTimeGetCurrent() - startTimeSIMD
         
-        print("Standard Vector3D addition time: \(standardTime)s")
-        print("SIMD Vector3D addition time: \(simdTime)s")
-        print("SIMD speedup: \(standardTime / simdTime)x")
+        let additionSpeedup = standardTime / simdTime
+        assertPerformanceMetrics(
+            operation: "Vector3D addition",
+            standardTime: standardTime,
+            simdTime: simdTime,
+            speedup: additionSpeedup
+        )
         
         // Test dot product performance
-        let startTimeStandardDot = CFAbsoluteTimeGetCurrent()
-        for i in 0..<testVectors.count - 1 {
-            _ = testVectors[i].dot(testVectors[i + 1])
+        let standardDotTime = measureTime {
+            for i in 0..<testVectors.count - 1 {
+                _ = testVectors[i].dot(testVectors[i + 1])
+            }
         }
-        let standardDotTime = CFAbsoluteTimeGetCurrent() - startTimeStandardDot
         
-        let startTimeSIMDDot = CFAbsoluteTimeGetCurrent()
-        for i in 0..<simdVectors.count - 1 {
-            _ = simdVectors[i].dot(simdVectors[i + 1])
+        let simdDotTime = measureTime {
+            for i in 0..<simdVectors.count - 1 {
+                _ = simdVectors[i].dot(simdVectors[i + 1])
+            }
         }
-        let simdDotTime = CFAbsoluteTimeGetCurrent() - startTimeSIMDDot
         
-        print("Standard Vector3D dot product time: \(standardDotTime)s")
-        print("SIMD Vector3D dot product time: \(simdDotTime)s")
-        print("SIMD dot product speedup: \(standardDotTime / simdDotTime)x")
+        let dotSpeedup = standardDotTime / simdDotTime
+        assertPerformanceMetrics(
+            operation: "Vector3D dot product",
+            standardTime: standardDotTime,
+            simdTime: simdDotTime,
+            speedup: dotSpeedup
+        )
         
         // Test cross product performance
-        let startTimeStandardCross = CFAbsoluteTimeGetCurrent()
-        for i in 0..<testVectors.count - 1 {
-            _ = testVectors[i].cross(testVectors[i + 1])
+        let standardCrossTime = measureTime {
+            for i in 0..<testVectors.count - 1 {
+                _ = testVectors[i].cross(testVectors[i + 1])
+            }
         }
-        let standardCrossTime = CFAbsoluteTimeGetCurrent() - startTimeStandardCross
         
-        let startTimeSIMDCross = CFAbsoluteTimeGetCurrent()
-        for i in 0..<simdVectors.count - 1 {
-            _ = simdVectors[i].cross(simdVectors[i + 1])
+        let simdCrossTime = measureTime {
+            for i in 0..<simdVectors.count - 1 {
+                _ = simdVectors[i].cross(simdVectors[i + 1])
+            }
         }
-        let simdCrossTime = CFAbsoluteTimeGetCurrent() - startTimeSIMDCross
         
-        print("Standard Vector3D cross product time: \(standardCrossTime)s")
-        print("SIMD Vector3D cross product time: \(simdCrossTime)s")
-        print("SIMD cross product speedup: \(standardCrossTime / simdCrossTime)x")
+        let crossSpeedup = standardCrossTime / simdCrossTime
+        assertPerformanceMetrics(
+            operation: "Vector3D cross product",
+            standardTime: standardCrossTime,
+            simdTime: simdCrossTime,
+            speedup: crossSpeedup
+        )
     }
     
     @Test("SIMD Quaternion performance comparison", .timeLimit(.minutes(1)))
@@ -161,40 +185,90 @@ struct SIMDPerformanceTests {
         let simdQuaternions = testQuaternions.map { $0.simd }
         
         // Test quaternion multiplication performance
-        let startTimeStandard = CFAbsoluteTimeGetCurrent()
-        for i in 0..<testQuaternions.count - 1 {
-            _ = testQuaternions[i] * testQuaternions[i + 1]
+        let standardTime = measureTime {
+            for i in 0..<testQuaternions.count - 1 {
+                _ = testQuaternions[i] * testQuaternions[i + 1]
+            }
         }
-        let standardTime = CFAbsoluteTimeGetCurrent() - startTimeStandard
         
-        let startTimeSIMD = CFAbsoluteTimeGetCurrent()
-        for i in 0..<simdQuaternions.count - 1 {
-            _ = simdQuaternions[i] * simdQuaternions[i + 1]
+        let simdTime = measureTime {
+            for i in 0..<simdQuaternions.count - 1 {
+                _ = simdQuaternions[i] * simdQuaternions[i + 1]
+            }
         }
-        let simdTime = CFAbsoluteTimeGetCurrent() - startTimeSIMD
         
-        print("Standard Quaternion multiplication time: \(standardTime)s")
-        print("SIMD Quaternion multiplication time: \(simdTime)s")
-        print("SIMD quaternion speedup: \(standardTime / simdTime)x")
+        let multiplicationSpeedup = standardTime / simdTime
+        assertPerformanceMetrics(
+            operation: "Quaternion multiplication",
+            standardTime: standardTime,
+            simdTime: simdTime,
+            speedup: multiplicationSpeedup
+        )
         
         // Test vector rotation performance
         let testVector = Vector3D(x: 1.0, y: 1.0, z: 1.0)
         let testSIMDVector = testVector.simd
         
-        let startTimeStandardRotate = CFAbsoluteTimeGetCurrent()
-        for quaternion in testQuaternions {
-            _ = quaternion.rotate(testVector)
+        let standardRotateTime = measureTime {
+            for quaternion in testQuaternions {
+                _ = quaternion.rotate(testVector)
+            }
         }
-        let standardRotateTime = CFAbsoluteTimeGetCurrent() - startTimeStandardRotate
         
-        let startTimeSIMDRotate = CFAbsoluteTimeGetCurrent()
-        for quaternion in simdQuaternions {
-            _ = quaternion.rotate(testSIMDVector)
+        let simdRotateTime = measureTime {
+            for quaternion in simdQuaternions {
+                _ = quaternion.rotate(testSIMDVector)
+            }
         }
-        let simdRotateTime = CFAbsoluteTimeGetCurrent() - startTimeSIMDRotate
         
-        print("Standard Quaternion vector rotation time: \(standardRotateTime)s")
-        print("SIMD Quaternion vector rotation time: \(simdRotateTime)s")
-        print("SIMD rotation speedup: \(standardRotateTime / simdRotateTime)x")
+        let rotationSpeedup = standardRotateTime / simdRotateTime
+        assertPerformanceMetrics(
+            operation: "Quaternion vector rotation",
+            standardTime: standardRotateTime,
+            simdTime: simdRotateTime,
+            speedup: rotationSpeedup
+        )
+    }
+    
+    // MARK: - Performance Testing Helpers
+    
+    /// Measures the execution time of a closure
+    private func measureTime(_ closure: () -> Void) -> Double {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        closure()
+        return CFAbsoluteTimeGetCurrent() - startTime
+    }
+    
+    /// Asserts performance metrics and logs results
+    private func assertPerformanceMetrics(
+        operation: String,
+        standardTime: Double,
+        simdTime: Double,
+        speedup: Double
+    ) {
+        // Log performance metrics (for debugging and analysis)
+        // Note: These will only be visible in debug builds or when explicitly requested
+        print("[\(operation)] Standard: \(String(format: "%.6f", standardTime))s, SIMD: \(String(format: "%.6f", simdTime))s, Speedup: \(String(format: "%.2f", speedup))x")
+        
+        // Assert that operations complete within reasonable time bounds
+        #expect(standardTime < Self.maxStandardOperationTime, 
+                "Standard \(operation) time (\(standardTime)s) exceeds maximum acceptable time (\(Self.maxStandardOperationTime)s)")
+        
+        #expect(simdTime < Self.maxStandardOperationTime, 
+                "SIMD \(operation) time (\(simdTime)s) exceeds maximum acceptable time (\(Self.maxStandardOperationTime)s)")
+        
+        // Assert that SIMD performance is not significantly worse than standard
+        #expect(speedup >= Self.minExpectedSpeedupRatio,
+                "SIMD \(operation) speedup (\(speedup)x) is below minimum expected ratio (\(Self.minExpectedSpeedupRatio)x)")
+        
+        // Assert that neither implementation is excessively slow relative to the other
+        let performanceRatio = max(standardTime / simdTime, simdTime / standardTime)
+        #expect(performanceRatio <= Self.maxPerformanceDegradationRatio,
+                "\(operation) performance ratio (\(performanceRatio)x) exceeds maximum acceptable degradation (\(Self.maxPerformanceDegradationRatio)x)")
+        
+        // Assert that times are finite and positive
+        #expect(standardTime.isFinite && standardTime > 0, "Standard \(operation) time must be finite and positive")
+        #expect(simdTime.isFinite && simdTime > 0, "SIMD \(operation) time must be finite and positive")
+        #expect(speedup.isFinite && speedup > 0, "\(operation) speedup must be finite and positive")
     }
 }

@@ -122,7 +122,14 @@ public actor FABRIKSolver: InverseKinematicsSolvable {
     
     private func calculateInitialJointPositions(from jointValues: [Double]) -> [Vector3D] {
         let transforms = calculateJointTransforms(jointValues: jointValues)
-        return transforms.map { $0.position }
+        var positions = transforms.map { $0.position }
+        
+        // Ensure we have base position at start
+        if positions.isEmpty || positions.first?.distance(to: chain.baseTransform.position) ?? 0 > 1e-6 {
+            positions.insert(chain.baseTransform.position, at: 0)
+        }
+        
+        return positions
     }
     
     private func forwardReaching(jointPositions: [Vector3D], target: Vector3D) -> [Vector3D] {
@@ -205,23 +212,43 @@ public actor FABRIKSolver: InverseKinematicsSolvable {
     private func calculateJointAngles(from jointPositions: [Vector3D]) -> [Double] {
         var angles: [Double] = []
         
-        // Ensure we return correct number of joint values
+        guard jointPositions.count >= 2 else {
+            // Return zero angles if insufficient positions
+            return Array(repeating: 0.0, count: chain.joints.count)
+        }
+        
+        // Calculate angles between consecutive joint positions
         for i in 0..<chain.joints.count {
             let angle: Double
             
-            if i < jointPositions.count {
-                // Use forward kinematics to determine actual joint angles
-                let currentPosition = jointPositions[i]
-                
-                switch chain.joints[i].type {
-                case .revolute:
-                    // Simple angle calculation for planar robot
-                    angle = atan2(currentPosition.y, currentPosition.x)
-                case .prismatic:
-                    angle = currentPosition.magnitude
-                default:
+            if i == 0 {
+                // First joint angle relative to base
+                if jointPositions.count > 1 {
+                    let direction = jointPositions[1] - jointPositions[0]
+                    angle = atan2(direction.y, direction.x)
+                } else {
                     angle = 0.0
                 }
+            } else if i < jointPositions.count - 1 {
+                // Subsequent joint angles as the relative angle between links
+                let prevDirection = jointPositions[i] - jointPositions[i - 1]
+                let nextDirection = jointPositions[i + 1] - jointPositions[i]
+                
+                let prevAngle = atan2(prevDirection.y, prevDirection.x)
+                let nextAngle = atan2(nextDirection.y, nextDirection.x)
+                
+                // Calculate relative angle
+                var relativeAngle = nextAngle - prevAngle
+                
+                // Normalize angle to [-π, π]
+                while relativeAngle > Double.pi {
+                    relativeAngle -= 2 * Double.pi
+                }
+                while relativeAngle < -Double.pi {
+                    relativeAngle += 2 * Double.pi
+                }
+                
+                angle = relativeAngle
             } else {
                 angle = 0.0
             }
@@ -368,7 +395,14 @@ public actor AdvancedFABRIKSolver: InverseKinematicsSolvable {
     
     private func calculateInitialJointPositions(from jointValues: [Double]) -> [Vector3D] {
         let transforms = calculateJointTransforms(jointValues: jointValues)
-        return transforms.map { $0.position }
+        var positions = transforms.map { $0.position }
+        
+        // Ensure we have base position at start
+        if positions.isEmpty || positions.first?.distance(to: chain.baseTransform.position) ?? 0 > 1e-6 {
+            positions.insert(chain.baseTransform.position, at: 0)
+        }
+        
+        return positions
     }
     
     private func forwardReaching(jointPositions: [Vector3D], target: Vector3D) -> [Vector3D] {
@@ -457,23 +491,43 @@ public actor AdvancedFABRIKSolver: InverseKinematicsSolvable {
     private func calculateJointAngles(from jointPositions: [Vector3D]) -> [Double] {
         var angles: [Double] = []
         
-        // Ensure we return correct number of joint values
+        guard jointPositions.count >= 2 else {
+            // Return zero angles if insufficient positions
+            return Array(repeating: 0.0, count: chain.joints.count)
+        }
+        
+        // Calculate angles between consecutive joint positions
         for i in 0..<chain.joints.count {
             let angle: Double
             
-            if i < jointPositions.count {
-                // Use forward kinematics to determine actual joint angles
-                let currentPosition = jointPositions[i]
-                
-                switch chain.joints[i].type {
-                case .revolute:
-                    // Simple angle calculation for planar robot
-                    angle = atan2(currentPosition.y, currentPosition.x)
-                case .prismatic:
-                    angle = currentPosition.magnitude
-                default:
+            if i == 0 {
+                // First joint angle relative to base
+                if jointPositions.count > 1 {
+                    let direction = jointPositions[1] - jointPositions[0]
+                    angle = atan2(direction.y, direction.x)
+                } else {
                     angle = 0.0
                 }
+            } else if i < jointPositions.count - 1 {
+                // Subsequent joint angles as the relative angle between links
+                let prevDirection = jointPositions[i] - jointPositions[i - 1]
+                let nextDirection = jointPositions[i + 1] - jointPositions[i]
+                
+                let prevAngle = atan2(prevDirection.y, prevDirection.x)
+                let nextAngle = atan2(nextDirection.y, nextDirection.x)
+                
+                // Calculate relative angle
+                var relativeAngle = nextAngle - prevAngle
+                
+                // Normalize angle to [-π, π]
+                while relativeAngle > Double.pi {
+                    relativeAngle -= 2 * Double.pi
+                }
+                while relativeAngle < -Double.pi {
+                    relativeAngle += 2 * Double.pi
+                }
+                
+                angle = relativeAngle
             } else {
                 angle = 0.0
             }

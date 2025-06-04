@@ -74,6 +74,52 @@ public struct IKSolution: Sendable, Codable {
     )
 }
 
+public extension IKSolution {
+    /// Determines if the solution has converged based on the error metric and tolerance
+    /// - Parameter tolerance: The tolerance threshold for convergence
+    /// - Returns: true if the error is below or equal to the tolerance and the solution is valid
+    func isConverged(tolerance: Double) -> Bool {
+        guard !jointValues.isEmpty else { return false }
+        guard error.isFinite else { return false }
+        return error <= tolerance
+    }
+    
+    /// Determines if the solution has converged using the default IK parameters tolerance
+    /// - Returns: true if the error is below the default tolerance and the solution is valid
+    func isConverged() -> Bool {
+        return isConverged(tolerance: IKParameters.default.tolerance)
+    }
+    
+    /// Analyzes the convergence behavior from the history
+    /// - Returns: A tuple containing convergence analysis information
+    func convergenceAnalysis() -> (hasImproved: Bool, finalImprovement: Double?, averageImprovement: Double?) {
+        guard let history = convergenceHistory, history.count > 1 else {
+            return (false, nil, nil)
+        }
+        
+        let initialError = history.first!
+        let finalError = history.last!
+        let hasImproved = finalError < initialError
+        let finalImprovement = initialError - finalError
+        
+        // Calculate average improvement per iteration
+        var totalImprovement = 0.0
+        var improvementCount = 0
+        
+        for i in 1..<history.count {
+            let improvement = history[i-1] - history[i]
+            if improvement > 0 {
+                totalImprovement += improvement
+                improvementCount += 1
+            }
+        }
+        
+        let averageImprovement = improvementCount > 0 ? totalImprovement / Double(improvementCount) : nil
+        
+        return (hasImproved, finalImprovement, averageImprovement)
+    }
+}
+
 public protocol ForwardKinematicsCalculable: Sendable {
     func calculateEndEffector(jointValues: [Double]) -> Transform
     func calculateJointTransforms(jointValues: [Double]) -> [Transform]
