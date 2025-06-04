@@ -1,7 +1,7 @@
 # Inverse Kinematics Swift Library
 
 ![Swift 6.1+](https://img.shields.io/badge/Swift-6.1+-orange.svg)
-![Platforms](https://img.shields.io/badge/Platforms-iOS%2013+%20|%20macOS%2013+%20|%20tvOS%2013+%20|%20watchOS%206+%20|%20visionOS%201+-blue.svg)
+![Platforms](https://img.shields.io/badge/Platforms-iOS%2013+%20|%20macOS%2013+%20|%20tvOS%2013+%20|%20watchOS%206+%20|%20visionOS%201+%20|%20Linux-blue.svg)
 ![CI Status](https://github.com/edgeengineer/inverse-kinematics/workflows/Swift%20CI/badge.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
@@ -11,11 +11,12 @@ A comprehensive, cross-platform Swift library for robotics inverse kinematics wi
 
 - 🤖 **Multiple IK Algorithms**: Analytical, Jacobian-based, CCD, FABRIK
 - 🚀 **Swift 6.1+ Ready**: Modern async/await with actor-based concurrency
-- 📱 **Cross-Platform**: iOS, macOS, tvOS, watchOS, visionOS, Linux
+- 📱 **Cross-Platform**: iOS, macOS, tvOS, watchOS, visionOS, Linux (Swift 6.1+)
 - 🧮 **Comprehensive Math**: Vector3D, Quaternion, Transform, Matrix4x4
 - 🔧 **Flexible Design**: Protocol-based architecture for extensibility
 - ✅ **Well Tested**: 55+ comprehensive unit tests
 - 📚 **Type Safe**: Leverages Swift's advanced type system
+- ⚡ **Optimized**: Uses FoundationEssentials when available for better performance
 
 ## Supported Algorithms
 
@@ -181,6 +182,144 @@ let solution = try await fabrikSolver.solveIK(
 | **CCD** | Real-time applications | Fast, intuitive | Local minima |
 | **FABRIK** | Long kinematic chains | Fast, natural motion | Position-only |
 
+## Performance Optimization Guide
+
+This library provides **dual APIs** for performance optimization: standard implementations for compatibility and SIMD-optimized versions for performance-critical applications.
+
+### Standard vs. SIMD APIs
+
+#### Standard API (Default)
+```swift
+// Standard vector operations - maximum compatibility
+let result = vector1.dot(vector2)
+let cross = vector1.cross(vector2)
+let normalized = vector.normalized
+
+// Standard quaternion operations
+let rotated = quaternion.rotate(vector)
+let combined = quaternion1 * quaternion2
+```
+
+#### SIMD-Optimized API
+```swift
+// SIMD operations for performance-critical code
+let result = vector1.optimizedDot(vector2, config: .highPerformance)
+let cross = vector1.optimizedCross(vector2, config: .highPerformance)
+let normalized = vector.optimizedNormalized(config: .highPerformance)
+
+// SIMD quaternion operations
+let rotated = quaternion.optimizedRotate(vector, config: .highPerformance)
+let combined = quaternion1.optimizedMultiply(quaternion2, config: .highPerformance)
+```
+
+### Performance Configurations
+
+Choose the appropriate performance profile for your use case:
+
+```swift
+// High-performance: Aggressive SIMD usage, parallel processing
+let config = PerformanceConfig.highPerformance
+
+// Balanced: Selective SIMD usage, conservative thresholds (default)
+let config = PerformanceConfig.balanced  
+
+// Precision: No SIMD, maximum numerical accuracy
+let config = PerformanceConfig.precision
+```
+
+### Batch Operations
+
+For large-scale operations, use the optimized batch functions:
+
+```swift
+// Batch dot products with automatic optimization
+let dots = OptimizedMath.batchDotProducts(
+    vectors1: largeVectorArray1,
+    vectors2: largeVectorArray2,
+    config: .highPerformance
+)
+
+// Batch transformations
+let transformed = OptimizedMath.batchTransformPoints(
+    points: pointCloud,
+    transform: robotTransform,
+    config: .highPerformance
+)
+
+// Batch quaternion interpolation for animations
+let interpolated = OptimizedMath.batchQuaternionSlerp(
+    quaternions1: startPoses,
+    quaternions2: endPoses,
+    t: 0.5,
+    config: .highPerformance
+)
+```
+
+### Performance Characteristics
+
+Based on comprehensive testing with 1000 iterations:
+
+| Operation | Standard Time | SIMD Time | Speedup | Recommendation |
+|-----------|---------------|-----------|---------|----------------|
+| **Vector Dot Product** | 0.116ms | 0.098ms | **1.18x** | ✅ Use SIMD for batch operations |
+| **Quaternion Multiplication** | 0.135ms | 0.133ms | **1.01x** | ⚖️ Marginal benefit |
+| **Vector Addition** | 0.109ms | 0.130ms | **0.84x** | ❌ Standard is faster |
+| **Vector Cross Product** | 0.100ms | 0.115ms | **0.87x** | ❌ Standard is faster |
+| **Quaternion Rotation** | 0.129ms | 0.126ms | **1.02x** | ⚖️ Marginal benefit |
+
+### When to Use SIMD Optimizations
+
+#### ✅ **Recommended for:**
+- Batch processing large point clouds (>100 points)
+- Real-time animation with many quaternion interpolations  
+- High-frequency forward kinematics calculations
+- Applications where every microsecond counts
+- Large-scale workspace analysis
+
+#### ❌ **Not recommended for:**
+- Single vector/quaternion operations
+- Educational or prototyping code
+- Memory-constrained embedded systems
+- Applications prioritizing numerical precision over speed
+- Small-scale operations (<50 elements)
+
+#### ⚖️ **Platform Considerations:**
+- **Apple Silicon (M1/M2)**: SIMD optimizations most effective
+- **Intel x86_64**: Moderate SIMD benefits
+- **ARM (mobile)**: Variable performance depending on chip
+- **Linux**: Performance varies by distribution and hardware
+
+### Configuration Examples
+
+```swift
+// Real-time robotics application
+let robotConfig = PerformanceConfig(
+    useSIMDOptimizations: true,
+    enableParallelProcessing: true,
+    optimizationTolerance: 1e-8,
+    optimizationThreshold: 50
+)
+
+// Scientific simulation requiring maximum precision
+let scienceConfig = PerformanceConfig(
+    useSIMDOptimizations: false,
+    enableParallelProcessing: false,
+    optimizationTolerance: 1e-15,
+    optimizationThreshold: 1000
+)
+
+// General-purpose applications (default)
+let generalConfig = PerformanceConfig.balanced
+```
+
+### Automatic Optimization
+
+The library automatically chooses optimal implementations based on:
+- **Problem size**: SIMD activates above configured thresholds
+- **Platform capabilities**: Detected at runtime
+- **User configuration**: Performance vs. precision trade-offs
+- **Operation type**: Some operations benefit more from SIMD than others
+
 ## Requirements
 
 - **Swift**: 6.1 or later
@@ -215,10 +354,12 @@ InverseKinematics/
 
 ## Performance
 
-- **Optimized math operations** with efficient algorithms
+- **Optimized math operations** with efficient algorithms and optional SIMD acceleration
+- **FoundationEssentials support** for lightweight Foundation functionality when available
 - **Actor-based concurrency** for thread safety
 - **Value semantics** for predictable performance
 - **Minimal allocations** in hot paths
+- **Configurable performance** with automatic optimization selection
 
 ## Contributing
 

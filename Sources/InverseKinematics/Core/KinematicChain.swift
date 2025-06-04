@@ -114,7 +114,11 @@ public struct KinematicChain: Sendable, Codable {
         return transforms.last ?? baseTransform
     }
     
-    public func jacobian(jointValues: [Double]? = nil, epsilon: Double = 1e-6) -> [[Double]] {
+    public func jacobian(
+        jointValues: [Double]? = nil, 
+        epsilon: Double = 1e-6,
+        config: PerformanceConfig = .balanced
+    ) -> [[Double]] {
         let values = jointValues ?? self.jointValues
         let endEffector = endEffectorTransform(jointValues: values)
         
