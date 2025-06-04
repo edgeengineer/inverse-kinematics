@@ -14,7 +14,7 @@ A comprehensive, cross-platform Swift library for robotics inverse kinematics wi
 - 📱 **Cross-Platform**: iOS, macOS, tvOS, watchOS, visionOS, Linux
 - 🧮 **Comprehensive Math**: Vector3D, Quaternion, Transform, Matrix4x4
 - 🔧 **Flexible Design**: Protocol-based architecture for extensibility
-- ✅ **Well Tested**: 54+ comprehensive unit tests
+- ✅ **Well Tested**: 55+ comprehensive unit tests
 - 📚 **Type Safe**: Leverages Swift's advanced type system
 
 ## Supported Algorithms
@@ -40,14 +40,14 @@ Add this to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/edgeengineer/inverse-kinematics.git", from: "0.0.1")
+    .package(url: "https://github.com/edgeengineer/inverse-kinematics.git", from: "0.0.2")
 ]
 ```
 
 Or add it via Xcode:
 1. File → Add Package Dependencies
 2. Enter: `https://github.com/edgeengineer/inverse-kinematics`
-3. Select version `0.0.1` or later
+3. Select version `0.0.2` or later
 
 ## Quick Start
 
@@ -238,7 +238,7 @@ Run the comprehensive test suite:
 swift test
 ```
 
-The library includes 54+ tests covering:
+The library includes 55+ tests covering:
 - Math type operations
 - Forward kinematics validation
 - IK solver correctness
