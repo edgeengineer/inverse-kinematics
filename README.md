@@ -246,14 +246,10 @@ The library includes 55+ tests covering:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache 2.0 License 
 
 ## Acknowledgments
 
 - Inspired by modern robotics research and industry best practices
 - Built with Swift 6.1's advanced concurrency features
 - Designed for both research and production applications
-
----
-
-Made with ❤️ for the Swift robotics community

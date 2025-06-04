@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 public actor JacobianBasedSolver: InverseKinematicsSolvable {
     private let chain: KinematicChain

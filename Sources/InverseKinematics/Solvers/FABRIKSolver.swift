@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 public actor FABRIKSolver: InverseKinematicsSolvable {
     private let chain: KinematicChain
