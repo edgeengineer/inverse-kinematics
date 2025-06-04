@@ -3,9 +3,11 @@
 ![Swift 6.1+](https://img.shields.io/badge/Swift-6.1+-orange.svg)
 ![Platforms](https://img.shields.io/badge/Platforms-iOS%2013+%20|%20macOS%2013+%20|%20tvOS%2013+%20|%20watchOS%206+%20|%20visionOS%201+%20|%20Linux-blue.svg)
 ![CI Status](https://github.com/edgeengineer/inverse-kinematics/workflows/Swift%20CI/badge.svg)
-![License](https://img.shields.io/badge/License-MIT-green.svg)
+![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)
 
 A comprehensive, cross-platform Swift library for robotics inverse kinematics with modern Swift 6.1+ concurrency support.
+
+📚 **[Complete Documentation](https://edgeengineer.github.io/inverse-kinematics/documentation/inversekinematics/)** | 🎯 **[Why IK Matters](https://edgeengineer.github.io/inverse-kinematics/documentation/inversekinematics/why-inverse-kinematics-for-robotics)** | 🔍 **[Solver Comparison](https://edgeengineer.github.io/inverse-kinematics/documentation/inversekinematics/solver-comparison-guide)**
 
 ## Features
 
@@ -14,7 +16,7 @@ A comprehensive, cross-platform Swift library for robotics inverse kinematics wi
 - 📱 **Cross-Platform**: iOS, macOS, tvOS, watchOS, visionOS, Linux (Swift 6.1+)
 - 🧮 **Comprehensive Math**: Vector3D, Quaternion, Transform, Matrix4x4
 - 🔧 **Flexible Design**: Protocol-based architecture for extensibility
-- ✅ **Well Tested**: 150+ comprehensive unit tests
+- ✅ **Well Tested**: 215+ comprehensive unit tests
 - 📚 **Type Safe**: Leverages Swift's advanced type system
 - ⚡ **Optimized**: Uses FoundationEssentials when available for better performance
 
@@ -41,14 +43,14 @@ Add this to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/edgeengineer/inverse-kinematics.git", from: "0.0.2")
+    .package(url: "https://github.com/edgeengineer/inverse-kinematics.git", from: "0.0.3")
 ]
 ```
 
 Or add it via Xcode:
 1. File → Add Package Dependencies
 2. Enter: `https://github.com/edgeengineer/inverse-kinematics`
-3. Select version `0.0.2` or later
+3. Select version `0.0.3` or later
 
 ## Quick Start
 
@@ -202,14 +204,21 @@ let combined = quaternion1 * quaternion2
 
 #### SIMD-Optimized API
 ```swift
-// SIMD operations for performance-critical code
-let result = vector1.optimizedDot(vector2, config: .highPerformance)
-let cross = vector1.optimizedCross(vector2, config: .highPerformance)
-let normalized = vector.optimizedNormalized(config: .highPerformance)
+// SIMD operations for performance-critical code paths
+let vectors1: [Vector3D] = // ... large array of vectors
+let vectors2: [Vector3D] = // ... large array of vectors
 
-// SIMD quaternion operations
-let rotated = quaternion.optimizedRotate(vector, config: .highPerformance)
-let combined = quaternion1.optimizedMultiply(quaternion2, config: .highPerformance)
+// Batch operations automatically use SIMD when beneficial
+let dotProducts = OptimizedMath.batchDotProducts(
+    vectors1: vectors1, 
+    vectors2: vectors2, 
+    config: .highPerformance
+)
+
+// Use simd property for individual operations
+let simdVector = vector.simd
+let simdResult = simdVector.normalized
+let standardResult = simdResult.standard
 ```
 
 ### Performance Configurations
@@ -379,7 +388,7 @@ Run the comprehensive test suite:
 swift test
 ```
 
-The library includes 165+ tests covering:
+The library includes 215+ tests covering:
 - Math type operations
 - Forward kinematics validation
 - IK solver correctness
