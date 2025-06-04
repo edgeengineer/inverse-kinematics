@@ -78,7 +78,7 @@ extension SIMDVector3D {
     
     /// SIMD-optimized linear interpolation
     public func lerp(to other: SIMDVector3D, t: Double) -> SIMDVector3D {
-        SIMDVector3D(simd_mix(vector, other.vector, SIMD3<Double>(repeating: t)))
+        SIMDVector3D((1.0 - t) * vector + t * other.vector)
     }
 }
 

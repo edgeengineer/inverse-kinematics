@@ -211,7 +211,7 @@ public actor CCDWithOrientationSolver: InverseKinematicsSolvable {
                 )
             }
             
-            let jointTransforms = calculateJointTransforms(jointValues: currentJoints)
+            let _ = calculateJointTransforms(jointValues: currentJoints) // Note: Joint transforms calculated but not used
             
             for jointIndex in (0..<jointCount).reversed() {
                 var bestAngle = 0.0

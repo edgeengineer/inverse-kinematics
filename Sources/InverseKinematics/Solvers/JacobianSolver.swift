@@ -212,7 +212,7 @@ public actor JacobianBasedSolver: InverseKinematicsSolvable {
             }
             
             let jacobian = calculateJacobian(jointValues: currentJoints)
-            let jacobianT = transpose(jacobian)
+            // Note: jacobianT not needed for SDLS which uses SVD
             
             let positionError = target.position - currentTransform.position
             let rotationError = calculateRotationError(target: target.rotation, current: currentTransform.rotation)
